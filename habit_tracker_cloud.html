@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>每日习惯追踪看板 (多端同步 & 精准统计版) | Habit Tracker Pro</title>
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #f1f5f9;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .check-btn {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .check-btn:active {
+      transform: scale(0.85);
+    }
+    .today-col {
+      background-color: rgba(99, 102, 241, 0.06);
+      border-radius: 0.5rem;
+    }
+    /* GitHub 风格热力图配色 (5级绿色) */
+    .heat-level-0 { background-color: #ebedf0; border: 1px solid rgba(27, 31, 35, 0.06); }
+    .heat-level-1 { background-color: #9be9a8; border: 1px solid rgba(27, 31, 35, 0.06); }
+    .heat-level-2 { background-color: #40c463; border: 1px solid rgba(27, 31, 35, 0.06); }
+    .heat-level-3 { background-color: #30a14e; border: 1px solid rgba(27, 31, 35, 0.06); }
+    .heat-level-4 { background-color: #216e39; border: 1px solid rgba(27, 31, 35, 0.06); }
+
+    .heat-cell {
+      width: 13px;
+      height: 13px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .heat-cell:hover {
+      transform: scale(1.35);
+      z-index: 10;
+      box-shadow: 0 0 0 2px #4f46e5;
+    }
+    .heat-cell-today {
+      outline: 2px solid #4f46e5;
+      outline-offset: 1px;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="text-slate-800 min-h-screen pb-14">
+
+  <!-- 悬浮 Tooltip (用于热力图) -->
+  <div id="heatmapTooltip" class="fixed hidden pointer-events-none z-50 bg-slate-900/95 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700 max-w-xs transition-opacity duration-100">
+  </div>
+
+  <!-- 隐藏的文件上传输入框 (用于导入本地备份) -->
+  <input type="file" id="importFileInput" accept=".json" class="hidden" onchange="handleImportFile(event)">
+
+  <!-- 顶部导航栏 -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
+            ✓
+          </div>
+          <div>
+            <div class="flex items-center flex-wrap gap-2">
+              <h1 class="text-lg font-bold text-slate-900 leading-tight">习惯追踪看板</h1>
+              <span id="storageStatusBadge" class="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                🟠 本地缓存模式
+              </span>
+              <span id="cloudStatusBadge" onclick="openCloudModal()" class="cursor-pointer text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full hover:bg-slate-200 transition">
+                ☁️ 未配云同步
+              </span>
+            </div>
+            <p id="currentDateText" class="text-xs text-slate-500 mt-0.5"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 顶部操作栏 (已移除90天演示按钮) -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- 电脑本地文件直连 -->
+        <button onclick="bindLocalFile()" class="px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition" title="在电脑硬盘上绑定JSON文件，每次打卡实时自动写入硬盘">
+          🔗 绑定本地文件
+        </button>
+        <button onclick="openLocalFile()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition" title="读取硬盘上已有的JSON数据文件并开启实时同步">
+          📂 读取文件
+        </button>
+
+        <span class="text-slate-300 hidden sm:inline">|</span>
+
+        <!-- 平板/电脑多端云同步 -->
+        <button onclick="openCloudModal()" class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition shadow-sm">
+          ☁️ 多端云同步
+        </button>
+        <button id="manualSyncBtn" onclick="syncFromCloud(true)" class="hidden px-2.5 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition">
+          🔄 拉取云端
+        </button>
+
+        <span class="text-slate-300 hidden sm:inline">|</span>
+
+        <!-- 导出/导入/重置 -->
+        <button onclick="exportBackup()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+          ⬇️ 导出
+        </button>
+        <button onclick="triggerImport()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+          ⬆️ 导入
+        </button>
+        <button onclick="resetCurrentWeek()" class="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+          清空当周
+        </button>
+        <button onclick="restoreDefaults()" class="px-2.5 py-1.5 text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition">
+          重置全部
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ☁️ 云端多端同步配置弹窗 (GitHub Gist) -->
+  <div id="cloudModal" class="fixed inset-0 bg-slate-900/50 hidden z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center space-x-2">
+          <span class="text-xl">☁️</span>
+          <h3 class="text-base font-bold text-slate-900">电脑 & 平板自动云同步设置 (GitHub Gist)</h3>
+        </div>
+        <button onclick="closeCloudModal()" class="text-slate-400 hover:text-slate-600 text-sm font-bold px-2">✕</button>
+      </div>
+
+      <div class="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3.5 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+        <p class="font-semibold text-indigo-900">💡 多端实时同步说明</p>
+        <p>数据保存在你的 GitHub 私密 Gist 中。配置后，<strong>电脑和平板打开网页自动拉取最新记录，每次打卡自动同步到云端</strong>。</p>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            1. GitHub Personal Access Token (需勾选 <code class="bg-slate-100 px-1 py-0.5 rounded text-indigo-600">gist</code> 权限)
+          </label>
+          <input type="password" id="gistTokenInput" placeholder="输入 ghp_ 开头的 Token..."
+            class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            2. 云端存档 Gist ID (首次使用点右侧“一键新建”)
+          </label>
+          <div class="flex space-x-2">
+            <input type="text" id="gistIdInput" placeholder="填入已有的 Gist ID，或点击右侧新建 👉"
+              class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <button onclick="createNewCloudGist()" id="createGistBtn" class="px-3 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition whitespace-nowrap">
+              ✨ 一键新建云存档
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="cloudModalMsg" class="text-xs font-medium hidden p-2.5 rounded-xl"></div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+        <button onclick="disconnectCloud()" class="px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition">
+          断开云同步
+        </button>
+        <div class="flex items-center space-x-2">
+          <button onclick="pushToCloud(true)" class="px-3.5 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition">
+            ⬆️ 用本机覆盖云端
+          </button>
+          <button onclick="saveAndConnectCloud()" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition shadow-sm">
+            💾 保存并拉取云端
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-6">
+
+    <!-- 顶部核心指标卡片 -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">今日达成率</p>
+          <p id="statTodayRate" class="text-2xl font-bold text-slate-900 mt-1">0%</p>
+          <p id="statTodayCount" class="text-xs text-slate-500 mt-1">已完成 0 / 0 项</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-2xl">
+          🎯
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">所选周总进度</p>
+          <p id="statWeekRate" class="text-2xl font-bold text-slate-900 mt-1">0%</p>
+          <div class="w-28 h-2 bg-slate-100 rounded-full mt-2 overflow-hidden">
+            <div id="statWeekBar" class="h-full bg-indigo-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-2xl">
+          📈
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+        <div>
+          <p id="statStreakTitle" class="text-xs font-medium text-slate-400 uppercase tracking-wider">所选周最长连续</p>
+          <p id="statMaxStreak" class="text-2xl font-bold text-amber-600 mt-1">0 天</p>
+          <p id="statMaxStreakName" class="text-xs text-slate-500 mt-1 truncate max-w-[150px]">暂无记录</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-2xl">
+          🔥
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">过去一年累计打卡</p>
+          <p id="statYearChecks" class="text-2xl font-bold text-emerald-600 mt-1">0 次</p>
+          <p id="statActiveDays" class="text-xs text-slate-500 mt-1">全年活跃 0 天</p>
+        </div>
+        <div class="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-2xl">
+          🟩
+        </div>
+      </div>
+    </div>
+
+    <!-- 习惯打卡主矩阵 (支持跨周切换) -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+      <div class="p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">每周习惯打卡矩阵</h2>
+            <p class="text-xs text-slate-500 mt-0.5">打卡数据按真实日期独立保存，右侧实时计算当周连续天数与跨周衔接状态</p>
+          </div>
+          <!-- 周次导航器 -->
+          <div class="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
+            <button onclick="changeWeek(-1)" class="px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:shadow-sm rounded-lg transition">
+              ◀ 上一周
+            </button>
+            <span id="weekRangeLabel" class="px-2.5 py-1 text-xs font-semibold text-slate-800 whitespace-nowrap">
+              本周
+            </span>
+            <button onclick="changeWeek(1)" class="px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:shadow-sm rounded-lg transition">
+              下一周 ▶
+            </button>
+            <button id="backToCurrentWeekBtn" onclick="resetToCurrentWeek()" class="hidden px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition">
+              回到本周
+            </button>
+          </div>
+        </div>
+
+        <!-- 添加新习惯表单 -->
+        <form id="addHabitForm" class="flex items-center space-x-2">
+          <select id="habitIcon" class="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="🗣️">🗣️</option>
+            <option value="⚡">⚡</option>
+            <option value="🏃">🏃</option>
+            <option value="🎧">🎧</option>
+            <option value="📚">📚</option>
+            <option value="🥗">🥗</option>
+            <option value="💻">💻</option>
+            <option value="🌙">🌙</option>
+          </select>
+          <input type="text" id="habitName" placeholder="输入新的每日目标..." required
+            class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm w-44 sm:w-56 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition shadow-sm whitespace-nowrap">
+            + 添加习惯
+          </button>
+        </form>
+      </div>
+
+      <!-- 打卡列表 -->
+      <div class="overflow-x-auto p-5 custom-scrollbar">
+        <div class="min-w-[780px]">
+          <div id="matrixHeader" class="grid grid-cols-12 gap-2 pb-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wider items-center">
+            <div class="col-span-4 pl-2">习惯名称</div>
+            <div id="dayHeader0" class="col-span-1 text-center py-1">周一</div>
+            <div id="dayHeader1" class="col-span-1 text-center py-1">周二</div>
+            <div id="dayHeader2" class="col-span-1 text-center py-1">周三</div>
+            <div id="dayHeader3" class="col-span-1 text-center py-1">周四</div>
+            <div id="dayHeader4" class="col-span-1 text-center py-1">周五</div>
+            <div id="dayHeader5" class="col-span-1 text-center py-1">周六</div>
+            <div id="dayHeader6" class="col-span-1 text-center py-1">周日</div>
+            <div class="col-span-1 text-center">当周连续 / 进度</div>
+          </div>
+
+          <div id="habitRowsContainer" class="divide-y divide-slate-100 mt-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GitHub 风格年度打卡热力图 -->
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <h2 class="text-base font-bold text-slate-900">年度打卡热力图 (GitHub Contributions 风格)</h2>
+            <span id="heatmapTotalBadge" class="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+              过去 53 周共 0 次打卡
+            </span>
+          </div>
+          <p class="text-xs text-slate-500 mt-0.5">悬停查看每日明细，点击任意方块可快速跳转至该周进行补卡或修改</p>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <label for="heatmapFilter" class="text-xs font-medium text-slate-500 whitespace-nowrap">展示维度：</label>
+          <select id="heatmapFilter" onchange="renderHeatmap()" class="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">📊 全部习惯综合达成率</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto pb-2 custom-scrollbar">
+        <div class="min-w-[820px] select-none">
+          <div id="heatmapMonths" class="flex text-[11px] text-slate-400 font-medium mb-1.5 pl-9 relative h-4"></div>
+
+          <div class="flex items-start">
+            <div class="flex flex-col justify-between text-[11px] text-slate-400 font-medium pr-2 h-[109px] py-[1px] w-9">
+              <span>周一</span>
+              <span>周三</span>
+              <span>周五</span>
+              <span>周日</span>
+            </div>
+            <div id="heatmapGrid" class="flex gap-[3px]"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
+        <div class="flex flex-wrap items-center gap-4">
+          <span>📅 统计周期：<strong id="heatmapPeriodText" class="text-slate-700 font-medium">-</strong></span>
+          <span>🏆 年度最长连续：<strong id="heatmapBestStreak" class="text-emerald-600 font-semibold">0 天</strong></span>
+          <span>⚡ 满勤天数 (100%)：<strong id="heatmapPerfectDays" class="text-indigo-600 font-semibold">0 天</strong></span>
+        </div>
+        <div class="flex items-center space-x-1.5 self-end sm:self-auto">
+          <span>少 (0%)</span>
+          <span class="heat-cell heat-level-0 inline-block !cursor-default !transform-none"></span>
+          <span class="heat-cell heat-level-1 inline-block !cursor-default !transform-none"></span>
+          <span class="heat-cell heat-level-2 inline-block !cursor-default !transform-none"></span>
+          <span class="heat-cell heat-level-3 inline-block !cursor-default !transform-none"></span>
+          <span class="heat-cell heat-level-4 inline-block !cursor-default !transform-none"></span>
+          <span>多 (100%)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图表可视化分析区 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-base font-bold text-slate-900">所选周每日完成趋势</h3>
+            <p class="text-xs text-slate-500">柱状代表完成数量，折线代表当日达成率 (%)</p>
+          </div>
+        </div>
+        <div class="h-64">
+          <canvas id="weeklyTrendChart"></canvas>
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+        <div class="mb-4">
+          <h3 class="text-base font-bold text-slate-900">所选周习惯打卡频次分布</h3>
+          <p class="text-xs text-slate-500">各项习惯在当前查看周的累计执行占比</p>
+        </div>
+        <div class="h-64 flex items-center justify-center">
+          <canvas id="habitDistributionChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    const STORAGE_KEY = 'habit_tracker_pro_v2';
+    const CLOUD_CONFIG_KEY = 'habit_tracker_gist_config';
+    const GIST_FILENAME = 'habit_tracker_data.json';
+
+    const DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+    let habits = [];
+    let currentWeekOffset = 0;
+    let trendChart = null;
+    let distChart = null;
+
+    let localFileHandle = null;
+    let cloudConfig = { token: '', gistId: '' };
+    let pushDebounceTimer = null;
+
+    function formatDateKey(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function getMondayOfWeek(date) {
+      const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const day = d.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      d.setDate(d.getDate() + diff);
+      return d;
+    }
+
+    function createDefaultHabits() {
+      const today = new Date();
+      const monday = getMondayOfWeek(today);
+      const d0 = formatDateKey(monday);
+      const d1 = formatDateKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 1));
+      const d2 = formatDateKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 2));
+
+      return [
+        { id: 1, name: '日语 Shadowing 跟读 & N1 阅读', icon: '🗣️', history: { [d0]: true, [d1]: true, [d2]: true } },
+        { id: 2, name: '专业课复习 (电路 / 微积分刷题)', icon: '⚡', history: { [d0]: true, [d1]: true, [d2]: true } },
+        { id: 3, name: '跑步 & 俯卧撑体能训练', icon: '🏃', history: { [d0]: true, [d2]: true } },
+        { id: 4, name: '英语听力与词汇积累', icon: '🎧', history: { [d1]: true, [d2]: true } },
+        { id: 5, name: '自制健康料理 & 23:30前入睡', icon: '🥗', history: { [d0]: true, [d1]: true, [d2]: true } }
+      ];
+    }
+
+    function loadData() {
+      const savedConfig = localStorage.getItem(CLOUD_CONFIG_KEY);
+      if (savedConfig) {
+        try { cloudConfig = JSON.parse(savedConfig); } catch (e) {}
+      }
+
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        try {
+          habits = JSON.parse(saved);
+          habits.forEach(h => { if (!h.history) h.history = {}; });
+        } catch (e) {
+          habits = createDefaultHabits();
+        }
+      } else {
+        habits = createDefaultHabits();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
+      }
+
+      updateCloudBadgeUI();
+    }
+
+    async function saveData(triggerCloudPush = true) {
+      const jsonStr = JSON.stringify(habits, null, 2);
+      localStorage.setItem(STORAGE_KEY, jsonStr);
+
+      // 1. 若绑定了本地硬盘文件，实时写入硬盘
+      if (localFileHandle) {
+        try {
+          const writable = await localFileHandle.createWritable();
+          await writable.write(jsonStr);
+          await writable.close();
+          updateStorageBadge(true, localFileHandle.name);
+        } catch (err) {
+          console.error('写入本地文件失败:', err);
+          updateStorageBadge(false);
+        }
+      }
+
+      // 2. 若配置了 GitHub Gist 云同步，防抖推送至云端
+      if (triggerCloudPush && cloudConfig.token && cloudConfig.gistId) {
+        setCloudBadgeStatus('syncing', '🔄 正在同步云端...');
+        if (pushDebounceTimer) clearTimeout(pushDebounceTimer);
+        pushDebounceTimer = setTimeout(() => {
+          pushToCloud(false);
+        }, 600);
+      }
+    }
+
+    // ================= 核心修复：精准计算所选周连续天数与跨周衔接 =================
+    /**
+     * 计算某个习惯在当前查看周（weekDates）的连续打卡情况：
+     * 1. 严格以所选周为边界计算本周最长连续天数（绝不会把下一周的打卡混入上一周！）
+     * 2. 只要当周内勾选了任意 1 天（例如仅勾选周一），必然显示至少 1 天，绝不显示 0 天。
+     * 3. 智能检测跨周衔接：如果本周一（weekDates[0]）打了卡，且紧邻的上周日（weekDates[0] 前一天）也打了卡，
+     *    则向前追溯紧邻的上一周连续段，计算出包含跨周衔接在内的真实连续天数，并返回跨周标识。
+     */
+    function calculateWeekStreakInfo(habit, weekDates) {
+      // 1. 计算仅限当周 7 天内的最长连续天数
+      let maxInWeek = 0;
+      let cur = 0;
+      for (let i = 0; i < 7; i++) {
+        const k = formatDateKey(weekDates[i]);
+        if (habit.history[k]) {
+          cur++;
+          if (cur > maxInWeek) maxInWeek = cur;
+        } else {
+          cur = 0;
+        }
+      }
+
+      // 2. 检查跨周连接情况：只有当“所选周的周一”和“上一周的周日”同时打卡时，才算跨周连接成功
+      const mondayDate = weekDates[0];
+      const mondayKey = formatDateKey(mondayDate);
+      const prevSundayDate = new Date(mondayDate.getFullYear(), mondayDate.getMonth(), mondayDate.getDate() - 1);
+      const prevSundayKey = formatDateKey(prevSundayDate);
+
+      let priorConnectedDays = 0;
+      if (habit.history[mondayKey] && habit.history[prevSundayKey]) {
+        let checkDate = new Date(prevSundayDate);
+        while (habit.history[formatDateKey(checkDate)]) {
+          priorConnectedDays++;
+          checkDate.setDate(checkDate.getDate() - 1);
+        }
+      }
+
+      // 如果存在跨周连接，计算从上周连过来的这一段在当周延伸了几天
+      let connectedStreakTotal = 0;
+      if (priorConnectedDays > 0) {
+        let weekHeadRun = 0;
+        for (let i = 0; i < 7; i++) {
+          if (habit.history[formatDateKey(weekDates[i])]) {
+            weekHeadRun++;
+          } else {
+            break;
+          }
+        }
+        connectedStreakTotal = priorConnectedDays + weekHeadRun;
+      }
+
+      // 最终展示的连续天数：若上周日与本周一未连接，严格显示本周内连续天数；若已连接，取跨周总连续与本周内最大连续的较大值
+      const displayStreak = Math.max(maxInWeek, connectedStreakTotal);
+
+      return {
+        displayStreak,          // 主显示天数
+        maxInWeek,              // 纯当周内最长连续
+        priorConnectedDays,     // 从上周无缝衔接过来的天数 (>0 说明跨周连接成功)
+        connectedStreakTotal    // 跨周连签总天数
+      };
+    }
+
+    // ================= 本地硬盘文件直连 =================
+    function updateStorageBadge(isConnected, fileName = '') {
+      const badge = document.getElementById('storageStatusBadge');
+      if (isConnected) {
+        badge.className = 'text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full';
+        badge.textContent = `🟢 已连硬盘: ${fileName}`;
+      } else {
+        badge.className = 'text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full';
+        badge.textContent = '🟠 本地缓存模式';
+      }
+    }
+
+    async function bindLocalFile() {
+      if (!window.showSaveFilePicker) {
+        alert('当前浏览器不支持直接绑定硬盘文件（建议使用电脑端 Edge 或 Chrome）。\n在平板上建议使用“☁️ 多端云同步”或“⬇️ 导出”功能。');
+        return;
+      }
+      try {
+        localFileHandle = await window.showSaveFilePicker({
+          suggestedName: 'my_habits_data.json',
+          types: [{ description: 'JSON 数据文件', accept: { 'application/json': ['.json'] } }]
+        });
+        await saveData(false);
+        alert(`绑定成功！今后你的每次打卡都会实时写入硬盘文件【${localFileHandle.name}】。`);
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error(err);
+      }
+    }
+
+    async function openLocalFile() {
+      if (!window.showOpenFilePicker) {
+        triggerImport();
+        return;
+      }
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'JSON 数据文件', accept: { 'application/json': ['.json'] } }]
+        });
+        localFileHandle = handle;
+        const file = await localFileHandle.getFile();
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const imported = Array.isArray(parsed) ? parsed : parsed.habits;
+        if (Array.isArray(imported)) {
+          habits = imported;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
+          updateStorageBadge(true, localFileHandle.name);
+          updateHeatmapFilterOptions();
+          renderAll();
+        } else {
+          alert('文件格式不正确！');
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') alert('读取文件失败，请检查文件是否为有效的 JSON 备份。');
+      }
+    }
+
+    // ================= ☁️ GitHub Gist 云同步逻辑 =================
+    function updateCloudBadgeUI() {
+      const manualBtn = document.getElementById('manualSyncBtn');
+      if (cloudConfig.token && cloudConfig.gistId) {
+        setCloudBadgeStatus('connected', '☁️ 云端已连接');
+        manualBtn.classList.remove('hidden');
+      } else {
+        setCloudBadgeStatus('disconnected', '☁️ 未配云同步');
+        manualBtn.classList.add('hidden');
+      }
+    }
+
+    function setCloudBadgeStatus(state, text) {
+      const badge = document.getElementById('cloudStatusBadge');
+      badge.textContent = text;
+      if (state === 'connected') {
+        badge.className = 'cursor-pointer text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full hover:bg-emerald-100 transition';
+      } else if (state === 'syncing') {
+        badge.className = 'cursor-pointer text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full animate-pulse';
+      } else if (state === 'error') {
+        badge.className = 'cursor-pointer text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-full';
+      } else {
+        badge.className = 'cursor-pointer text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full hover:bg-slate-200 transition';
+      }
+    }
+
+    function showModalMessage(text, isError = false) {
+      const msgEl = document.getElementById('cloudModalMsg');
+      msgEl.textContent = text;
+      msgEl.className = `text-xs font-medium p-2.5 rounded-xl ${isError ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`;
+      msgEl.classList.remove('hidden');
+    }
+
+    function openCloudModal() {
+      document.getElementById('gistTokenInput').value = cloudConfig.token || '';
+      document.getElementById('gistIdInput').value = cloudConfig.gistId || '';
+      document.getElementById('cloudModalMsg').classList.add('hidden');
+      document.getElementById('cloudModal').classList.remove('hidden');
+    }
+
+    function closeCloudModal() {
+      document.getElementById('cloudModal').classList.add('hidden');
+    }
+
+    async function createNewCloudGist() {
+      const token = document.getElementById('gistTokenInput').value.trim();
+      if (!token) {
+        showModalMessage('请先输入 GitHub Personal Access Token！', true);
+        return;
+      }
+
+      const btn = document.getElementById('createGistBtn');
+      btn.disabled = true;
+      btn.textContent = '创建中...';
+
+      try {
+        const res = await fetch('https://api.github.com/gists', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            description: 'Habit Tracker Pro Cloud Sync Data',
+            public: false,
+            files: {
+              [GIST_FILENAME]: {
+                content: JSON.stringify({ updatedAt: new Date().toISOString(), habits: habits }, null, 2)
+              }
+            }
+          })
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        document.getElementById('gistIdInput').value = data.id;
+        cloudConfig = { token, gistId: data.id };
+        localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cloudConfig));
+        updateCloudBadgeUI();
+        showModalMessage(`🎉 云存档创建成功！专属 Gist ID：${data.id}`);
+      } catch (err) {
+        showModalMessage('创建失败：请检查 Token 是否正确且勾选了 gist 权限。', true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✨ 一键新建云存档';
+      }
+    }
+
+    async function saveAndConnectCloud() {
+      const token = document.getElementById('gistTokenInput').value.trim();
+      const gistId = document.getElementById('gistIdInput').value.trim();
+      if (!token || !gistId) {
+        showModalMessage('请完整填写 Token 和 Gist ID。', true);
+        return;
+      }
+      cloudConfig = { token, gistId };
+      localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cloudConfig));
+      await syncFromCloud(true);
+    }
+
+    async function syncFromCloud(showAlert = false) {
+      if (!cloudConfig.token || !cloudConfig.gistId) return;
+
+      setCloudBadgeStatus('syncing', '🔄 正在拉取...');
+      try {
+        const res = await fetch(`https://api.github.com/gists/${cloudConfig.gistId}`, {
+          headers: {
+            'Authorization': `Bearer ${cloudConfig.token}`,
+            'Accept': 'application/vnd.github+json'
+          },
+          cache: 'no-store'
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const fileObj = data.files && data.files[GIST_FILENAME];
+
+        if (fileObj && fileObj.content) {
+          const parsed = JSON.parse(fileObj.content);
+          const remoteHabits = Array.isArray(parsed) ? parsed : parsed.habits;
+          if (Array.isArray(remoteHabits)) {
+            habits = remoteHabits;
+            await saveData(false);
+            updateHeatmapFilterOptions();
+            renderAll();
+            const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            setCloudBadgeStatus('connected', `☁️ 已同步 (${timeStr})`);
+            if (showAlert) {
+              showModalMessage('✅ 已成功从云端同步最新打卡数据！');
+              setTimeout(() => closeCloudModal(), 800);
+            }
+            return;
+          }
+        }
+        throw new Error('未找到有效数据文件');
+      } catch (err) {
+        console.error(err);
+        setCloudBadgeStatus('error', '❌ 同步失败');
+        if (showAlert) showModalMessage('拉取失败：请检查 Token 或 Gist ID 是否正确。', true);
+      }
+    }
+
+    async function pushToCloud(isManualModal = false) {
+      const token = isManualModal ? document.getElementById('gistTokenInput').value.trim() : cloudConfig.token;
+      const gistId = isManualModal ? document.getElementById('gistIdInput').value.trim() : cloudConfig.gistId;
+
+      if (!token || !gistId) {
+        if (isManualModal) showModalMessage('请先填写 Token 和 Gist ID！', true);
+        return;
+      }
+
+      if (isManualModal) {
+        cloudConfig = { token, gistId };
+        localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cloudConfig));
+      }
+
+      setCloudBadgeStatus('syncing', '🔄 正在上传...');
+      try {
+        const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            files: {
+              [GIST_FILENAME]: {
+                content: JSON.stringify({ updatedAt: new Date().toISOString(), habits: habits }, null, 2)
+              }
+            }
+          })
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const timeStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        setCloudBadgeStatus('connected', `☁️ 已同步 (${timeStr})`);
+        document.getElementById('manualSyncBtn').classList.remove('hidden');
+
+        if (isManualModal) {
+          showModalMessage('✅ 本机数据已上传并覆盖云端存档！');
+          setTimeout(() => closeCloudModal(), 800);
+        }
+      } catch (err) {
+        console.error(err);
+        setCloudBadgeStatus('error', '❌ 上传失败');
+        if (isManualModal) showModalMessage('上传失败：请检查网络及 Token 权限。', true);
+      }
+    }
+
+    function disconnectCloud() {
+      if (confirm('确定要断开云端同步连接吗？（本机打卡数据不会丢失）')) {
+        cloudConfig = { token: '', gistId: '' };
+        localStorage.removeItem(CLOUD_CONFIG_KEY);
+        updateCloudBadgeUI();
+        closeCloudModal();
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && cloudConfig.token && cloudConfig.gistId) {
+        syncFromCloud(false);
+      }
+    });
+
+    // ================= 本地导出与导入 =================
+    function exportBackup() {
+      const dataStr = JSON.stringify(habits, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `habit_backup_${formatDateKey(new Date())}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function triggerImport() {
+      document.getElementById('importFileInput').click();
+    }
+
+    function handleImportFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          const importedHabits = Array.isArray(parsed) ? parsed : parsed.habits;
+          if (Array.isArray(importedHabits)) {
+            habits = importedHabits;
+            saveData(true);
+            updateHeatmapFilterOptions();
+            renderAll();
+            alert('🎉 备份数据导入成功！');
+          } else {
+            alert('导入失败：JSON 数据结构不正确。');
+          }
+        } catch (err) {
+          alert('导入失败：无法解析该文件。');
+        }
+        event.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    // ================= 看板渲染逻辑 =================
+    function getSelectedWeekDates() {
+      const today = new Date();
+      const currentMonday = getMondayOfWeek(today);
+      currentMonday.setDate(currentMonday.getDate() + currentWeekOffset * 7);
+
+      const dates = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(currentMonday.getFullYear(), currentMonday.getMonth(), currentMonday.getDate() + i);
+        dates.push(d);
+      }
+      return dates;
+    }
+
+    function updateHeatmapFilterOptions() {
+      const select = document.getElementById('heatmapFilter');
+      const currentVal = select.value;
+      select.innerHTML = '<option value="all">📊 全部习惯综合达成率</option>';
+      habits.forEach(h => {
+        const opt = document.createElement('option');
+        opt.value = String(h.id);
+        opt.textContent = `${h.icon} ${h.name}`;
+        select.appendChild(opt);
+      });
+      if ([...select.options].some(o => o.value === currentVal)) {
+        select.value = currentVal;
+      }
+    }
+
+    function initHeader() {
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+      document.getElementById('currentDateText').textContent = dateStr;
+    }
+
+    function changeWeek(delta) {
+      currentWeekOffset += delta;
+      renderAll();
+    }
+
+    function resetToCurrentWeek() {
+      currentWeekOffset = 0;
+      renderAll();
+    }
+
+    function renderMatrixAndStats() {
+      const weekDates = getSelectedWeekDates();
+      const todayKey = formatDateKey(new Date());
+
+      const startStr = `${weekDates[0].getMonth() + 1}月${weekDates[0].getDate()}日`;
+      const endStr = `${weekDates[6].getMonth() + 1}月${weekDates[6].getDate()}日`;
+      const weekRangeLabel = document.getElementById('weekRangeLabel');
+      const backBtn = document.getElementById('backToCurrentWeekBtn');
+      const streakCardTitle = document.getElementById('statStreakTitle');
+
+      if (currentWeekOffset === 0) {
+        weekRangeLabel.textContent = `本周 (${startStr} - ${endStr})`;
+        streakCardTitle.textContent = '本周最长连续打卡';
+        backBtn.classList.add('hidden');
+      } else {
+        const prefix = currentWeekOffset < 0 ? `${Math.abs(currentWeekOffset)}周前` : `${currentWeekOffset}周后`;
+        weekRangeLabel.textContent = `${prefix} (${startStr} - ${endStr})`;
+        streakCardTitle.textContent = `所选周 (${startStr}起) 最长连续`;
+        backBtn.classList.remove('hidden');
+      }
+
+      weekDates.forEach((d, idx) => {
+        const headerEl = document.getElementById(`dayHeader${idx}`);
+        const dKey = formatDateKey(d);
+        const mdStr = `${d.getMonth() + 1}/${d.getDate()}`;
+        if (dKey === todayKey) {
+          headerEl.innerHTML = `<div class="text-indigo-600 font-bold">${DAY_LABELS[idx]}</div><div class="text-[10px] text-indigo-500 font-semibold">今天 ${mdStr}</div>`;
+          headerEl.className = 'col-span-1 text-center py-1 bg-indigo-50 rounded-lg';
+        } else {
+          headerEl.innerHTML = `<div class="text-slate-500">${DAY_LABELS[idx]}</div><div class="text-[10px] text-slate-400 font-normal">${mdStr}</div>`;
+          headerEl.className = 'col-span-1 text-center py-1';
+        }
+      });
+
+      const container = document.getElementById('habitRowsContainer');
+      container.innerHTML = '';
+
+      let todayCompleted = 0;
+      let weekTotalChecks = 0;
+      let maxStreakVal = 0;
+      let maxStreakHabit = '暂无记录';
+
+      habits.forEach(habit => {
+        if (habit.history[todayKey]) todayCompleted++;
+
+        let habitWeekChecks = 0;
+        weekDates.forEach(d => {
+          if (habit.history[formatDateKey(d)]) habitWeekChecks++;
+        });
+        weekTotalChecks += habitWeekChecks;
+        const weekRate = Math.round((habitWeekChecks / 7) * 100);
+
+        // 使用修复后的按周独立+跨周前溯计算函数
+        const streakInfo = calculateWeekStreakInfo(habit, weekDates);
+        const streak = streakInfo.displayStreak;
+
+        if (streak > maxStreakVal) {
+          maxStreakVal = streak;
+          maxStreakHabit = `${habit.icon} ${habit.name}`;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-12 gap-2 py-3.5 items-center hover:bg-slate-50/80 transition rounded-xl px-1';
+
+        let rowHTML = `
+          <div class="col-span-4 flex items-center justify-between pr-3 pl-1">
+            <div class="flex items-center space-x-2.5 truncate">
+              <span class="text-xl flex-shrink-0">${habit.icon}</span>
+              <span class="text-sm font-medium text-slate-800 truncate" title="${habit.name}">${habit.name}</span>
+            </div>
+            <button onclick="deleteHabit(${habit.id})" class="text-slate-300 hover:text-rose-500 transition text-xs px-1.5 py-0.5 rounded" title="删除该习惯">
+              ✕
+            </button>
+          </div>
+        `;
+
+        weekDates.forEach(d => {
+          const dKey = formatDateKey(d);
+          const checked = !!habit.history[dKey];
+          const isToday = dKey === todayKey;
+          const btnClass = checked
+            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200 border-indigo-600'
+            : 'bg-white text-transparent hover:border-indigo-300 border-slate-200';
+          const colHighlight = isToday ? 'today-col' : '';
+
+          rowHTML += `
+            <div class="col-span-1 flex justify-center py-1 ${colHighlight}">
+              <button onclick="toggleCheck(${habit.id}, '${dKey}')"
+                title="${dKey}"
+                class="check-btn w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold ${btnClass}">
+                ✓
+              </button>
+            </div>
+          `;
+        });
+
+        // 如果上周日与本周一成功衔接，给出直观的“跨周连签”微标签提示
+        const crossWeekBadge = streakInfo.priorConnectedDays > 0
+          ? `<span class="text-[10px] text-emerald-600 font-medium leading-none" title="已与上一周无缝衔接 (+${streakInfo.priorConnectedDays}天)">🔗跨周 (本${streakInfo.maxInWeek}天)</span>`
+          : `<span class="text-[10px] text-slate-400 leading-none">本周 ${habitWeekChecks}/7</span>`;
+
+        rowHTML += `
+          <div class="col-span-1 flex flex-col items-center justify-center space-y-1">
+            <div class="flex items-center space-x-1 text-xs font-bold ${streak > 0 ? 'text-amber-600' : 'text-slate-400'}">
+              <span>🔥 ${streak}天</span>
+            </div>
+            <div class="w-14 h-1.5 bg-slate-100 rounded-full overflow-hidden" title="所选周完成 ${habitWeekChecks}/7 天">
+              <div class="h-full bg-emerald-500 rounded-full transition-all duration-300" style="width: ${weekRate}%"></div>
+            </div>
+            ${crossWeekBadge}
+          </div>
+        `;
+
+        row.innerHTML = rowHTML;
+        container.appendChild(row);
+      });
+
+      const totalHabits = habits.length;
+      const todayRate = totalHabits > 0 ? Math.round((todayCompleted / totalHabits) * 100) : 0;
+      const weekPossible = totalHabits * 7;
+      const weekOverallRate = weekPossible > 0 ? Math.round((weekTotalChecks / weekPossible) * 100) : 0;
+
+      document.getElementById('statTodayRate').textContent = `${todayRate}%`;
+      document.getElementById('statTodayCount').textContent = `已完成 ${todayCompleted} / ${totalHabits} 项`;
+      document.getElementById('statWeekRate').textContent = `${weekOverallRate}%`;
+      document.getElementById('statWeekBar').style.width = `${weekOverallRate}%`;
+      document.getElementById('statMaxStreak').textContent = `${maxStreakVal} 天`;
+      document.getElementById('statMaxStreakName').textContent = maxStreakHabit;
+    }
+
+    function renderHeatmap() {
+      const gridEl = document.getElementById('heatmapGrid');
+      const monthsEl = document.getElementById('heatmapMonths');
+      const filterVal = document.getElementById('heatmapFilter').value;
+
+      gridEl.innerHTML = '';
+      monthsEl.innerHTML = '';
+
+      const today = new Date();
+      const todayKey = formatDateKey(today);
+      const currentMonday = getMondayOfWeek(today);
+
+      const totalWeeks = 53;
+      const startMonday = new Date(currentMonday.getFullYear(), currentMonday.getMonth(), currentMonday.getDate() - (totalWeeks - 1) * 7);
+      const endSunday = new Date(currentMonday.getFullYear(), currentMonday.getMonth(), currentMonday.getDate() + 6);
+
+      document.getElementById('heatmapPeriodText').textContent = `${formatDateKey(startMonday)} 至 ${formatDateKey(endSunday)}`;
+
+      const targetHabits = filterVal === 'all'
+        ? habits
+        : habits.filter(h => String(h.id) === filterVal);
+      const maxPerDay = targetHabits.length;
+
+      let totalChecksInPeriod = 0;
+      let activeDaysCount = 0;
+      let perfectDaysCount = 0;
+      let bestYearlyStreak = 0;
+      let runningStreak = 0;
+      let lastRenderedMonth = -1;
+
+      for (let w = 0; w < totalWeeks; w++) {
+        const weekCol = document.createElement('div');
+        weekCol.className = 'flex flex-col gap-[3px]';
+
+        const weekFirstDay = new Date(startMonday.getFullYear(), startMonday.getMonth(), startMonday.getDate() + w * 7);
+        const m = weekFirstDay.getMonth();
+        if (m !== lastRenderedMonth) {
+          const monthLabel = document.createElement('span');
+          monthLabel.className = 'absolute whitespace-nowrap';
+          monthLabel.style.left = `${36 + w * 16}px`;
+          monthLabel.textContent = MONTH_NAMES[m];
+          monthsEl.appendChild(monthLabel);
+          lastRenderedMonth = m;
+        }
+
+        for (let d = 0; d < 7; d++) {
+          const cellDate = new Date(startMonday.getFullYear(), startMonday.getMonth(), startMonday.getDate() + w * 7 + d);
+          const dateKey = formatDateKey(cellDate);
+
+          const completedList = [];
+          targetHabits.forEach(h => {
+            if (h.history[dateKey]) {
+              completedList.push(`${h.icon} ${h.name}`);
+            }
+          });
+
+          const count = completedList.length;
+          totalChecksInPeriod += count;
+
+          const ratio = maxPerDay > 0 ? count / maxPerDay : 0;
+          if (count > 0) {
+            activeDaysCount++;
+            runningStreak++;
+            if (runningStreak > bestYearlyStreak) bestYearlyStreak = runningStreak;
+          } else if (cellDate <= today) {
+            runningStreak = 0;
+          }
+
+          if (maxPerDay > 0 && count === maxPerDay) {
+            perfectDaysCount++;
+          }
+
+          let level = 0;
+          if (count > 0) {
+            if (ratio <= 0.25) level = 1;
+            else if (ratio <= 0.50) level = 2;
+            else if (ratio < 1.0) level = 3;
+            else level = 4;
+          }
+
+          const cell = document.createElement('div');
+          cell.className = `heat-cell heat-level-${level} ${dateKey === todayKey ? 'heat-cell-today' : ''}`;
+
+          if (cellDate > today) {
+            cell.classList.add('opacity-35');
+          }
+
+          const weekOffsetFromNow = w - (totalWeeks - 1);
+          const dayName = DAY_LABELS[d];
+          const pct = Math.round(ratio * 100);
+
+          cell.addEventListener('mouseenter', (e) => {
+            showTooltip(e, dateKey, dayName, count, maxPerDay, pct, completedList, dateKey === todayKey);
+          });
+          cell.addEventListener('mousemove', (e) => {
+            moveTooltip(e);
+          });
+          cell.addEventListener('mouseleave', () => {
+            hideTooltip();
+          });
+
+          cell.addEventListener('click', () => {
+            currentWeekOffset = weekOffsetFromNow;
+            renderAll();
+            window.scrollTo({ top: 120, behavior: 'smooth' });
+          });
+
+          weekCol.appendChild(cell);
+        }
+
+        gridEl.appendChild(weekCol);
+      }
+
+      document.getElementById('heatmapTotalBadge').textContent = `过去 53 周共 ${totalChecksInPeriod} 次打卡`;
+      document.getElementById('heatmapBestStreak').textContent = `${bestYearlyStreak} 天`;
+      document.getElementById('heatmapPerfectDays').textContent = `${perfectDaysCount} 天`;
+
+      if (filterVal === 'all') {
+        document.getElementById('statYearChecks').textContent = `${totalChecksInPeriod} 次`;
+        document.getElementById('statActiveDays').textContent = `全年活跃 ${activeDaysCount} 天 · 满勤 ${perfectDaysCount} 天`;
+      }
+    }
+
+    const tooltipEl = document.getElementById('heatmapTooltip');
+    function showTooltip(e, dateKey, dayName, count, total, pct, completedList, isToday) {
+      let detailHTML = '';
+      if (completedList.length > 0) {
+        detailHTML = `<div class="mt-1.5 pt-1.5 border-t border-slate-700/80 space-y-0.5 text-[11px] text-emerald-300">` +
+          completedList.map(item => `<div class="truncate">✓ ${item}</div>`).join('') +
+          `</div>`;
+      } else {
+        detailHTML = `<div class="mt-1 text-[11px] text-slate-400">当日暂无打卡记录 (点击可跳转补卡)</div>`;
+      }
+
+      tooltipEl.innerHTML = `
+        <div class="font-bold text-white flex items-center justify-between gap-3">
+          <span>${dateKey} (${dayName})</span>
+          ${isToday ? '<span class="bg-indigo-600 text-[10px] px-1.5 py-0.2 rounded">今天</span>' : ''}
+        </div>
+        <div class="text-slate-300 mt-0.5">完成度：<strong class="text-emerald-400">${count} / ${total} 项 (${pct}%)</strong></div>
+        ${detailHTML}
+      `;
+      tooltipEl.classList.remove('hidden');
+      moveTooltip(e);
+    }
+
+    function moveTooltip(e) {
+      const pad = 14;
+      let left = e.clientX + pad;
+      let top = e.clientY - tooltipEl.offsetHeight - pad;
+      if (left + tooltipEl.offsetWidth > window.innerWidth - 10) {
+        left = e.clientX - tooltipEl.offsetWidth - pad;
+      }
+      if (top < 10) {
+        top = e.clientY + pad;
+      }
+      tooltipEl.style.left = `${left}px`;
+      tooltipEl.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+      tooltipEl.classList.add('hidden');
+    }
+
+    function toggleCheck(habitId, dateKey) {
+      const target = habits.find(h => h.id === habitId);
+      if (target) {
+        if (target.history[dateKey]) {
+          delete target.history[dateKey];
+        } else {
+          target.history[dateKey] = true;
+        }
+        saveData(true);
+        renderAll();
+      }
+    }
+
+    document.getElementById('addHabitForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const nameInput = document.getElementById('habitName');
+      const iconSelect = document.getElementById('habitIcon');
+      const name = nameInput.value.trim();
+      if (!name) return;
+
+      habits.push({
+        id: Date.now(),
+        name: name,
+        icon: iconSelect.value,
+        history: {}
+      });
+
+      nameInput.value = '';
+      saveData(true);
+      updateHeatmapFilterOptions();
+      renderAll();
+    });
+
+    function deleteHabit(habitId) {
+      habits = habits.filter(h => h.id !== habitId);
+      saveData(true);
+      updateHeatmapFilterOptions();
+      renderAll();
+    }
+
+    function resetCurrentWeek() {
+      if (confirm('确定要清空当前所选周的打卡记录吗？')) {
+        const weekDates = getSelectedWeekDates();
+        habits.forEach(h => {
+          weekDates.forEach(d => {
+            delete h.history[formatDateKey(d)];
+          });
+        });
+        saveData(true);
+        renderAll();
+      }
+    }
+
+    function restoreDefaults() {
+      if (confirm('确定要重置全部历史数据并恢复为默认预设习惯吗？')) {
+        habits = createDefaultHabits();
+        currentWeekOffset = 0;
+        saveData(true);
+        updateHeatmapFilterOptions();
+        renderAll();
+      }
+    }
+
+    function updateCharts() {
+      const weekDates = getSelectedWeekDates();
+      const dailyCounts = weekDates.map(d => {
+        const key = formatDateKey(d);
+        return habits.reduce((acc, h) => acc + (h.history[key] ? 1 : 0), 0);
+      });
+
+      const dailyRates = dailyCounts.map(c => habits.length > 0 ? Math.round((c / habits.length) * 100) : 0);
+
+      const ctxTrend = document.getElementById('weeklyTrendChart').getContext('2d');
+      if (trendChart) trendChart.destroy();
+
+      trendChart = new Chart(ctxTrend, {
+        type: 'bar',
+        data: {
+          labels: weekDates.map((d, i) => `${DAY_LABELS[i]} (${d.getMonth() + 1}/${d.getDate()})`),
+          datasets: [
+            {
+              type: 'line',
+              label: '当日达成率 (%)',
+              data: dailyRates,
+              borderColor: '#10b981',
+              backgroundColor: '#10b981',
+              borderWidth: 2.5,
+              tension: 0.35,
+              yAxisID: 'y1',
+              pointRadius: 4
+            },
+            {
+              type: 'bar',
+              label: '完成习惯数',
+              data: dailyCounts,
+              backgroundColor: 'rgba(79, 70, 229, 0.82)',
+              borderRadius: 8,
+              barThickness: 28,
+              yAxisID: 'y'
+            }
+          ]
+        },
+        options: {
+          animation: { duration: 250 },
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: Math.max(habits.length, 5),
+              ticks: { stepSize: 1 },
+              title: { display: true, text: '完成项数' }
+            },
+            y1: {
+              beginAtZero: true,
+              max: 100,
+              position: 'right',
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: '达成率 (%)' }
+            }
+          }
+        }
+      });
+
+      const ctxDist = document.getElementById('habitDistributionChart').getContext('2d');
+      if (distChart) distChart.destroy();
+
+      const habitLabels = habits.map(h => `${h.icon} ${h.name.slice(0, 8)}`);
+      const habitTotals = habits.map(h => {
+        return weekDates.reduce((acc, d) => acc + (h.history[formatDateKey(d)] ? 1 : 0), 0);
+      });
+      const hasAnyData = habitTotals.some(v => v > 0);
+
+      distChart = new Chart(ctxDist, {
+        type: 'doughnut',
+        data: {
+          labels: hasAnyData ? habitLabels : ['所选周暂无打卡'],
+          datasets: [{
+            data: hasAnyData ? habitTotals : [1],
+            backgroundColor: hasAnyData
+              ? ['#4f46e5', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6', '#f43f5e']
+              : ['#e2e8f0'],
+            borderWidth: 2,
+            borderColor: '#ffffff'
+          }]
+        },
+        options: {
+          animation: { duration: 250 },
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 12 } }
+          }
+        }
+      });
+    }
+
+    function renderAll() {
+      renderMatrixAndStats();
+      renderHeatmap();
+      updateCharts();
+    }
+
+    // 启动初始化
+    initHeader();
+    loadData();
+    updateHeatmapFilterOptions();
+    renderAll();
+
+    if (cloudConfig.token && cloudConfig.gistId) {
+      syncFromCloud(false);
+    }
+  </script>
+</body>
+</html>
